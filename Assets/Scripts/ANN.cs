@@ -47,6 +47,18 @@ public class ANN : MonoBehaviour
             ProcessData();
             counter++;
         }
+        /*var lineOfDigits = streamReader.ReadLine()?.Split(',');
+        _linesInTrainingData.Add(lineOfDigits);
+        for (var i = 0; i < 63; i++)
+        {
+            //_trainingDataValues[i] = int.Parse(_linesInTrainingData[counter][i]);
+            _trainingDataValues[i] = int.Parse(lineOfDigits[i]);
+        }*/
+            
+        // assign expected output
+        _outputExpected = int.Parse(_linesInTrainingData[counter][64]);
+        Debug.Log("outputExpected: "+_outputExpected);
+        ProcessData();
     }
 
     private void Init(int[] nodesPerLayer)
@@ -102,13 +114,22 @@ public class ANN : MonoBehaviour
     // 
     public bool ProcessData()
     {
-       // read input
+       /*// read input
+       var debugStr = "";
        ReadInput(_trainingDataValues);
+       foreach (var value in _trainingDataValues)
+       {
+           debugStr += value.ToString() + ", ";
+       }
+       Debug.Log("debugStr: "+debugStr);*/
        // forward feed
-       Debug.Log(ForwardFeed());
-       // Debug.Log(_outputExpected - _outputActual);
-       // back-propagate
-       BackwardsPropagate();
+       for (int i = 0; i < 10; i++)
+       {
+           ForwardFeed();
+           // back-propagate
+           BackwardsPropagate();
+           Debug.Log("delta: "+ Mathf.Abs(_outputExpected - _outputActual)+" actual: "+_outputActual);
+       }
        // return actual - expected < .5
        return true;
     }
@@ -129,6 +150,7 @@ public class ANN : MonoBehaviour
         {
             var denominator = (1 + Mathf.Exp(-currentLayer.Nodes[i].PreviousSum));
             currentLayer.Nodes[i].CurrentSum = (1 / denominator);
+            // Debug.Log(currentLayer.Nodes[i].CurrentSum);
         }
     }
 
@@ -162,9 +184,11 @@ public class ANN : MonoBehaviour
                 // for all the current weights in the next layers node
                 for (var w = 0; w < currentLayerNode.CurrentWeights.Length; w++)
                 {
+                    Debug.Log($"currentLayerNode.CurrentSum: {currentLayerNode.CurrentSum}, currentLayerNode.CurrentWeights[w] {currentLayerNode.CurrentWeights[w]}");
                     var weightedSumOfTheInputs = currentLayerNode.CurrentSum * currentLayerNode.CurrentWeights[w];
                     nextLayer.Nodes[w].PreviousSum += weightedSumOfTheInputs;
                 }
+                
             }
             if (i == -1)
             {
@@ -203,7 +227,7 @@ public class ANN : MonoBehaviour
                 summationOfWeightsAndDeltas += _inputLayer.Nodes[j].CurrentWeights[k] *
                                                _hiddenLayers[0].Nodes[k].ErrorAdjustments[0];
             }
-
+            
             _inputLayer.Nodes[j].ErrorAdjustments[0] =
                 CalculateInverseSigmoid(_inputLayer.Nodes[j].PreviousSum) * summationOfWeightsAndDeltas;
             
@@ -222,10 +246,10 @@ public class ANN : MonoBehaviour
     // Adjust weights for the outputs
     private void OutputErrors()
     {
-        Debug.Log($"hid lay node 0 prev sum: {_hiddenLayers[^1].Nodes[0].PreviousSum}");
+        //Debug.Log($"hid lay node 0 prev sum: {_hiddenLayers[^1].Nodes[0].PreviousSum}");
         // Debug.Log($"Expected {_outputExpected} Actual {_outputActual}");
         var delta = CalculateInverseSigmoid(_hiddenLayers[^1].Nodes[0].PreviousSum) * (_outputExpected - _outputActual);
-        Debug.Log("delta: "+delta);
+         // Debug.Log("delta: "+delta); // NaN
         _hiddenLayers[^1].Nodes[0].ErrorAdjustments[0] = delta;
         _hiddenLayers[^1].Nodes[0].CurrentWeights[0] += learningRate * _hiddenLayers[^1].Nodes[0].CurrentSum * delta;
     }
@@ -233,7 +257,12 @@ public class ANN : MonoBehaviour
     // Used in backwards propagation
     private float CalculateInverseSigmoid(float y)
     {
-        return Mathf.Log(y / (1 - y));
+        // (1 + Mathf.Exp(-currentLayer.Nodes[i].PreviousSum)
+
+        var inverSig = (1/(1 + Mathf.Exp(-y)) * (1 - (1/(1 + Mathf.Exp(-y)))));
+        // var inverSig = Mathf.Log(y / (1f - y));
+        // Debug.Log($"Inverse sigmoid y: {y} inverSig: {inverSig}");
+        return inverSig;
     }
 
     private void HiddenErrors()
