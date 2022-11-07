@@ -8,305 +8,370 @@ using Random = UnityEngine.Random;
 
 public class ANN : MonoBehaviour
 {
-    public float learningRate; // used in back-propagation to adjust weights
-    [SerializeField] private int[] nodesPerLayer;
+    [SerializeField] private double learningRate = 0.2;
     [SerializeField] private string trainingDataFileName;
-    [SerializeField] private string testDataFileName;
-    private List<string[]> _linesInTrainingData;
-    private int[] _trainingDataValues;
-    private string _path = "";
-    private float _outputExpected;
-    private float _outputActual;
-    private Layer _inputLayer; // 64 nodes total
-    private Layer[] _hiddenLayers; // arbitrary - tweak to perfect, set weights
-    private Layer _outputLayer; // 
+    [SerializeField] private string testingDataFileName;
+    private string trainingDataFilePath;
+    private string testingDataFilePath;
+    double numberCorrect = 0;
+    double numberTested = 0;
+    int numberOfLayers = 5;
+    List<double>[] layers;
+    List<List<double>>[] weights;
+    double[] changeInAnswer;
+    List<double>[] changeInWeight;
+    StreamReader trainingDataReader;
+    StreamReader testingDataReader;
+    string trainingDataText;
+    string[] currentInputString;
+    double[] currentInput;
+    private double sumWeightsValues = 0;
+    private double highestOutputNode = 0;
+    private double highestOutputFound = 0;
 
-    // initialize inputLayer, hiddenLayers, outputLayer, 
-
-    
-    private void Start()
+    // Start is called before the first frame update
+    void Start()
     {
-        _inputLayer = new Layer();
-        _linesInTrainingData = new List<string[]>();
-        _trainingDataValues = new int[65];
-        _path = Application.dataPath;
-        var streamReader = new StreamReader(_path + "/" + trainingDataFileName);
-        Init(nodesPerLayer);
-        var counter = 0;
-        while (!streamReader.EndOfStream)
+        trainingDataFilePath = $"{Application.dataPath}/"+"optdigits_train.txt";
+        testingDataFilePath = $"{Application.dataPath}/"+"optdigits_test.txt";
+        trainingDataReader = new StreamReader(trainingDataFilePath);
+        testingDataReader = new StreamReader(testingDataFilePath);
+        string path = $"{Application.dataPath}/testAccuracy.txt";
+        var sr = File.CreateText(path);
+        Init();
+        for (var i = 0; i < 5; i++)
         {
-            var lineOfDigits = streamReader.ReadLine()?.Split(',');
-            _linesInTrainingData.Add(lineOfDigits);
-            for (var i = 0; i < 64; i++)
+            TrainNeuralNet();
+            TestNeuralNet();
+            //Debug.Log($"NN was right " + ((numberCorrect) / numberTested) * 100 + $"%, numberCorrect: {numberCorrect}, numberTested: {numberTested}");
+            sr.WriteLine($"{numberCorrect},{numberTested},{numberCorrect/numberTested}");
+        }
+        sr.Close();
+    }
+
+    // g
+    public double Sigmoid(double val)
+    {
+        return 1 / (1 + (Math.Exp(-val)));
+    }
+
+    // g'
+    public double SigmoidDerivative(double val)
+    {
+        // return Sigmoid(val) * (1 - Sigmoid(val));
+        return Math.Log(Sigmoid(val) / (1 - Sigmoid(val)));
+    }
+
+    public double InverseSigmoid(double val)
+    {
+        return Math.Log(Sigmoid(val) / (1 - Sigmoid(val)));
+    }
+
+    private void Init()
+    {
+        // read in the first line of the training data
+        trainingDataText = trainingDataReader.ReadLine();
+        // split the texts via a comma delimiter 
+        currentInputString = trainingDataText.Split(",");
+        // initialize the size of the input array to be the length of the current input string
+        currentInput = new double[currentInputString.Length];
+        // initialize layers, weights, change in weights
+        layers = new List<double>[numberOfLayers];
+        weights = new List<List<double>>[numberOfLayers];
+        changeInWeight = new List<double>[numberOfLayers];
+        // delta between expected and actual
+        changeInAnswer = new double[10];
+
+        // initializes all of the layers
+        for (int i = 0; i < layers.Length; i++)
+        {
+            layers[i] = new List<double>();
+        }
+
+
+        for (int i = 0; i < currentInputString.Length; i++)
+        {
+            currentInput[i] = double.Parse(currentInputString[i]);
+            if (i == currentInputString.Length - 1)
             {
-                _trainingDataValues[i] = int.Parse(_linesInTrainingData[counter][i]);
+                break;
+            }
+            // add the input values to each node in the input layer
+            layers[0].Add(currentInput[i]);
+        }
+
+        // add all of the hidden nodes
+        int numberOfNodes = layers[0].Count / 2;
+        for (int i = 1; i < layers.Length-1; i++)
+        {
+            for (int j = 0; j < numberOfNodes - 1; j++)
+            {
+                layers[i].Add(0);
+            }
+
+            //Add the bias node for each layer
+            layers[i].Add(1);
+        }
+
+        // 10 possible output nodes
+        for (int i = 0; i < 10; i++)
+        {
+            // index from end syntax
+            layers[^1].Add(0);
+        }
+
+        // initializes weights and change in weights for each layer
+        for (int i = 1; i < layers.Length; i++)
+        {
+            weights[i] = new List<List<double>>();
+            changeInWeight[i] = new List<double>();
+
+            // for each node in the neural net layers
+            for (int j = 0; j < layers[i].Count; j++)
+            {
+                weights[i].Add(new List<double>());
+                changeInWeight[i].Add(0);
+                
+                // for each edge to this node assign a random weight between 0 and 1
+                for (int k = 0; k < layers[i - 1].Count; k++)
+                {
+                    weights[i][j].Add(Random.Range(0.0001f, .99999f));
+                }
+            }
+        }
+    }
+
+    private void TrainNeuralNet()
+    {
+        trainingDataReader = new StreamReader(trainingDataFilePath);
+        // trainingDataText = trainingDataLine.ReadLine();
+        
+        // continue forward feeding until the training data has been selected
+        while (trainingDataText != null )
+        {
+           // Debug.Log("New Input\n");
+            /*currentInputString = trainingDataText.Split(",");
+            currentInput = new double[currentInputString.Length];*/
+
+            ForwardFeed();
+
+            // find the highest output node
+            highestOutputFound = layers[^1][0];
+            for (int i = 0; i < layers[^1].Count; i++)
+            {
+                // switch the highest output found with the new found highest output
+                if (highestOutputFound < layers[^1][i])
+                {
+                    highestOutputFound = layers[^1][i];
+                    highestOutputNode = i;
+                }
             }
             
-            // assign expected output
-            _outputExpected = int.Parse(_linesInTrainingData[counter][64]);
-            ProcessData();
-            counter++;
+
+            // if the output is the correct then dont backwards propagate 
+            /*if (highestOutputNode == currentInput[^1])
+            {
+                //Debug.Log($"Answer was {highestOutputNode} highestOutputFound {highestOutputFound}");
+            }*/
+            
+            
+            // if the neural net did not find the correct answer back-prop
+            if(highestOutputNode != currentInput[^1])
+            {
+                Debug.Log($"Answer was not {highestOutputNode} answer was {currentInput[^1]}");
+                BackwardsPropagation();
+            }
+
+            trainingDataText = trainingDataReader.ReadLine();
+            currentInputString = trainingDataText?.Split(",");
+            if(currentInputString != null)
+                currentInput = new double[currentInputString.Length];
         }
-        /*var lineOfDigits = streamReader.ReadLine()?.Split(',');
-        _linesInTrainingData.Add(lineOfDigits);
-        for (var i = 0; i < 63; i++)
+    }
+    
+    private void ForwardFeed()
+    {
+        for (int i = 0; i < currentInputString.Length - 1; i++)
         {
-            //_trainingDataValues[i] = int.Parse(_linesInTrainingData[counter][i]);
-            _trainingDataValues[i] = int.Parse(lineOfDigits[i]);
+            currentInput[i] = double.Parse(currentInputString[i]);
+            // Input layer
+            layers[0][i] = currentInput[i];
+        }
+
+        // for each layer after input
+        for (int i = 1; i < layers.Length; i++)
+        {
+            // for each node in each layer
+            for (int j = 0; j < layers[i].Count; j++)
+            {
+               sumWeightsValues = 0;
+
+                // for each edge to the current node from the previous layer
+                for (int k = 0; k < weights[i].Count; k++)
+                {
+                    sumWeightsValues += (weights[i][j][k] * layers[i - 1][k]);
+                }
+
+                sumWeightsValues += layers[i][^1];
+
+                // prevent bias node value from being overwritten
+                if (j == layers[i].Count - 1 && i != layers.Length - 1)
+                {
+                    break;
+                }
+                layers[i][j] = Sigmoid(sumWeightsValues);
+            }
+        }
+    }
+
+    private void BackwardsPropagation()
+    {
+        
+        /*// set the output nodes that are not the correct output to 0
+        for (int i = 0; i < layers[^1].Count; i++)
+        {
+            if (i != highestOutputNode)
+            {
+                layers[^1][i] = 0;
+            }
         }*/
-            
-        // assign expected output
-        _outputExpected = int.Parse(_linesInTrainingData[counter][64]);
-        Debug.Log("outputExpected: "+_outputExpected);
-        ProcessData();
-    }
-
-    private void Init(int[] nodesPerLayer)
-    {
-        // reading in first 64 characters from file for input
-        _inputLayer.Nodes = new Node[64];
-        // nodesPerLayer length represents the number of layers in the ANN
-        _hiddenLayers = new Layer[nodesPerLayer.Length];
-
-        // assign weights for each node in the input layer
-        for (int i = 0; i < _inputLayer.Nodes.Length; i++)
+        
+        //Calculate change in answer for each node
+        for (int i = 0; i < layers[^1].Count; i++)
         {
-            // add weights for each node in the next layer - the first hidden layer after the input layer
-            _inputLayer.Nodes[i].CurrentWeights = new float[nodesPerLayer[0]];
-            _inputLayer.Nodes[i].ErrorAdjustments = new[] {0f};
-            
-            for (int j = 0; j < nodesPerLayer[0]; j++)
+            //If i is equal to the answer, use 1 as the expected result
+            //Else use 0 as the expected result
+            //Debug.Log($"i: {i}, currentInput[^1]: {currentInput[^1]}");
+            if (i == currentInput[^1])
             {
-                _inputLayer.Nodes[i].CurrentWeights[j] = Random.Range(0.0f, 1.0f);
+                // the change in answer will be positive if we like what we hear from the neural nets pathway
+                changeInAnswer[i] = InverseSigmoid(layers[^1][i]) * (1 - layers[^1][i]);
+                changeInWeight[layers.Length - 1][i] = changeInAnswer[i];
+            }
+            else
+            {
+                changeInAnswer[i] = InverseSigmoid(layers[^1][i]) * (0 - layers[^1][i]);
+                changeInWeight[layers.Length - 1][i] = changeInAnswer[i];
             }
         }
 
-        // each element in nodesPerLayer represents the number of nodes in that layer
-        for (int i = 0; i < nodesPerLayer.Length; i++)
+
+        // from last hidden layer to input layer update the weights
+        for (int i = layers.Length - 2; i > 0; i--)
         {
-            // create the array of nodes for each hidden layer 
-            _hiddenLayers[i].Nodes = new Node[nodesPerLayer[i]];
-            for (int j = 0; j < nodesPerLayer[i]; j++)
+            // go through each node in the layer
+            for (int j = 0; j < layers[i].Count; j++)
             {
-                // initialize each node created previously
-                _hiddenLayers[i].Nodes[j] = new Node();
-                if (i != nodesPerLayer.Length - 1)
+                // for each node in the previous layer
+                for (int k = 0; k < layers[i + 1].Count; k++)
                 {
-                    // create array of weights for each node in each layer
-                    _hiddenLayers[i].Nodes[j].CurrentWeights = new float[nodesPerLayer[i + 1]];
-                    _hiddenLayers[i].Nodes[j].ErrorAdjustments = new[] {0f};
-                    for (int w = 0; w < nodesPerLayer[i + 1]; w++)
+                    double value = 0;
+                    //For each edge to the current node
+                    for (int l = 0; l < layers[^1].Count; l++)
                     {
-                        // assign weights for each node in each layer
-                        _hiddenLayers[i].Nodes[j].CurrentWeights[w] = Random.Range(0.0f, 1.0f);
+                        value += changeInWeight[i + 1][k] * weights[i][j][l];
                     }
+
+                    changeInWeight[i][j] *= (SigmoidDerivative(layers[i][j]) * value);
                 }
-                else
+            }
+        }
+
+
+        // changes each weight of each node in each layer
+        for (int i = 1; i < layers.Length; i++)
+        {
+            for (int j = 0; j < weights[i].Count; j++)
+            {
+                for (int k = 0; k < weights[i][j].Count; k++)
                 {
-                    // for output layer weight is not needed
-                    _hiddenLayers[i].Nodes[j].CurrentWeights = new[] {Random.Range(0f,1f)};
-                    _hiddenLayers[i].Nodes[j].ErrorAdjustments = new float[1];
+                    weights[i][j][k] = weights[i][j][k] + (learningRate * layers[i][j] * changeInWeight[i][j]);
+                    // Debug.Log($"295 weights[i]j[j][k]: {weights[i][j][k]}");
+                    /*
+                    // keep the weight from going below 0
+                    if (weights[i][j][k] < 0)
+                    {
+                        weights[i][j][k] = 0;
+                    }*/
                 }
             }
         }
     }
-    
-    // 
-    public bool ProcessData()
-    {
-       /*// read input
-       var debugStr = "";
-       ReadInput(_trainingDataValues);
-       foreach (var value in _trainingDataValues)
-       {
-           debugStr += value.ToString() + ", ";
-       }
-       Debug.Log("debugStr: "+debugStr);*/
-       // forward feed
-       for (int i = 0; i < 10; i++)
-       {
-           ForwardFeed();
-           // back-propagate
-           BackwardsPropagate();
-           Debug.Log("delta: "+ Mathf.Abs(_outputExpected - _outputActual)+" actual: "+_outputActual);
-       }
-       // return actual - expected < .5
-       return true;
-    }
 
-    private void ReadInput(int[] trainingData)
-    {
-        for (int i = 0; i < trainingData.Length - 1; i++)
-        {
-            // assigning both current sum and previous sum in single line
-            _inputLayer.Nodes[i].CurrentSum = _inputLayer.Nodes[i].PreviousSum = trainingData[i];
-        }
-    }
 
-    // Need to find the current sum for each node in the current layer
-    private void Activation(Layer currentLayer)
-    {
-        for (int i = 0; i < currentLayer.Nodes.Length; i++)
-        {
-            var denominator = (1 + Mathf.Exp(-currentLayer.Nodes[i].PreviousSum));
-            currentLayer.Nodes[i].CurrentSum = (1 / denominator);
-            // Debug.Log(currentLayer.Nodes[i].CurrentSum);
-        }
-    }
 
-    private float ForwardFeed()
+    private void TestNeuralNet()
     {
-        // i = -1 to check the input layer to hidden layer length - 1 to not access the output layer
-        for (var i = -1; i < _hiddenLayers.Length - 1; i++)
+        testingDataReader = new StreamReader(testingDataFilePath);
+        trainingDataText = testingDataReader.ReadLine();
+
+        // testing the ANN
+        while(trainingDataText != null)
         {
-            // reference the appropriate layers
-            Layer currentLayer; 
-            Layer nextLayer; 
+            numberTested++;
+            currentInputString = trainingDataText.Split(",");
+            currentInput = new double[currentInputString.Length];
+
+            for (int i = 0; i < currentInput.Length; i++)
+            {
+                currentInput[i] = double.Parse(currentInputString[i]);
+
+                // the last character in the input string is the correct answer
+                if (i == currentInputString.Length - 1)
+                {
+                    break;
+                }
+                layers[0][i] = currentInput[i];
+            }
+
+            // for each layer starting with the first hidden layer
+            for (int i = 1; i < layers.Length; i++)
+            {
+                // for each node in each layer layer
+                for (int j = 0; j < layers[i].Count; j++)
+                {
+                    double value = 0;
+
+                    //For each edge to the current node
+                    for (int k = 0; k < weights[i].Count; k++)
+                    {
+                        value += (weights[i][j][k] * layers[i - 1][k]);
+                    }
+
+                    // prevent the bias node's value from being overwritten
+                    if (j == layers[i].Count - 1 && i != layers.Length - 1)
+                    {
+                        break;
+                    }
+                    //Debug.Log(value);
+                    layers[i][j] = Sigmoid(value);
+                    // Debug.Log(layers[l][node]);
+                }
+            }
+
+
+            double highestNode = 0;
+            // highest value is first set to the first node of the output layer
+            double highestValue = layers[^1][0];
             
-            // handle input layer case
-            if (i == -1)
+            // check and update any new higher values found
+            for (int i = 0; i < layers[^1].Count; i++)
             {
-                currentLayer = _inputLayer;
-                nextLayer = _hiddenLayers[i + 1];
-            }
-            else
-            {
-                currentLayer = _hiddenLayers[i];
-                nextLayer = _hiddenLayers[i + 1];
-                
-                // activation function
-                Activation(currentLayer);
-            }
-            // for all the nodes in the current layer
-            for (var j = 0; j < currentLayer.Nodes.Length; j++)
-            {
-                Node currentLayerNode = currentLayer.Nodes[j];
-                // for all the current weights in the next layers node
-                for (var w = 0; w < currentLayerNode.CurrentWeights.Length; w++)
+                if (highestValue < layers[^1][i])
                 {
-                    Debug.Log($"currentLayerNode.CurrentSum: {currentLayerNode.CurrentSum}, currentLayerNode.CurrentWeights[w] {currentLayerNode.CurrentWeights[w]}");
-                    var weightedSumOfTheInputs = currentLayerNode.CurrentSum * currentLayerNode.CurrentWeights[w];
-                    nextLayer.Nodes[w].PreviousSum += weightedSumOfTheInputs;
+                    highestValue = layers[^1][i];
+                    highestNode = i;
                 }
-                
-            }
-            if (i == -1)
-            {
-                _inputLayer = currentLayer;
-                _hiddenLayers[i + 1] = nextLayer;
-            }
-            else
-            {
-                _hiddenLayers[i] = currentLayer;
-                _hiddenLayers[i + 1] = nextLayer;
-            }
-        }
-        Activation(_hiddenLayers[^1]);
-        // only 1 node in the last hidden layer - aka output layer
-        return _outputActual = _hiddenLayers[^1].Nodes[0].CurrentSum;
-    }
-    
-    private void BackwardsPropagate()
-    {
-        // output errors
-        OutputErrors();
-        // hidden errors
-        HiddenErrors();
-        // input errors
-        InputErrors();
-    }
-
-    private void InputErrors()
-    {
-        // j is the current node, i is the next layer
-        for (int j = 0; j < _inputLayer.Nodes.Length; j++)
-        {
-            float summationOfWeightsAndDeltas = 0f;
-            for (int k = 0; k < _inputLayer.Nodes[j].CurrentWeights.Length; k++)
-            {
-                summationOfWeightsAndDeltas += _inputLayer.Nodes[j].CurrentWeights[k] *
-                                               _hiddenLayers[0].Nodes[k].ErrorAdjustments[0];
-            }
-            
-            _inputLayer.Nodes[j].ErrorAdjustments[0] =
-                CalculateInverseSigmoid(_inputLayer.Nodes[j].PreviousSum) * summationOfWeightsAndDeltas;
-            
-            for (int k = 0; k < _inputLayer.Nodes[j].CurrentWeights.Length; k++)
-            {
-                _inputLayer.Nodes[j].CurrentWeights[k] += _hiddenLayers[0].Nodes[k].ErrorAdjustments[0] *
-                                                                   learningRate * _inputLayer.Nodes[k].CurrentSum;
-
-                _hiddenLayers[0].Nodes[k].PreviousSum = 0f;
             }
 
-            _inputLayer.Nodes[j].PreviousSum = 0f;
+            // if the highest node found matches the expected answer then increment number correct
+            if (highestNode == currentInput[currentInput.Length - 1])
+            {
+                numberCorrect++;
+            }
+
+            //Debug.Log($"NN was right " + ((numberCorrect) / numberTested) * 100 + $"%, numberCorrect: {numberCorrect}");
+            trainingDataText = testingDataReader.ReadLine();
         }
     }
-
-    // Adjust weights for the outputs
-    private void OutputErrors()
-    {
-        //Debug.Log($"hid lay node 0 prev sum: {_hiddenLayers[^1].Nodes[0].PreviousSum}");
-        // Debug.Log($"Expected {_outputExpected} Actual {_outputActual}");
-        var delta = CalculateInverseSigmoid(_hiddenLayers[^1].Nodes[0].PreviousSum) * (_outputExpected - _outputActual);
-         // Debug.Log("delta: "+delta); // NaN
-        _hiddenLayers[^1].Nodes[0].ErrorAdjustments[0] = delta;
-        _hiddenLayers[^1].Nodes[0].CurrentWeights[0] += learningRate * _hiddenLayers[^1].Nodes[0].CurrentSum * delta;
-    }
-
-    // Used in backwards propagation
-    private float CalculateInverseSigmoid(float y)
-    {
-        // (1 + Mathf.Exp(-currentLayer.Nodes[i].PreviousSum)
-
-        var inverSig = (1/(1 + Mathf.Exp(-y)) * (1 - (1/(1 + Mathf.Exp(-y)))));
-        // var inverSig = Mathf.Log(y / (1f - y));
-        // Debug.Log($"Inverse sigmoid y: {y} inverSig: {inverSig}");
-        return inverSig;
-    }
-
-    private void HiddenErrors()
-    {
-        for (int i = _hiddenLayers.Length - 1; i > 1; i--)
-        {
-            // j is the current node, i is the next layer
-            for (int j = 0; j < _hiddenLayers[i - 1].Nodes.Length; j++)
-            {
-                float summationOfWeightsAndDeltas = 0f;
-                for (int k = 0; k < _hiddenLayers[i - 1].Nodes[j].CurrentWeights.Length; k++)
-                {
-                    summationOfWeightsAndDeltas += _hiddenLayers[i - 1].Nodes[j].CurrentWeights[k] *
-                                                   _hiddenLayers[i].Nodes[k].ErrorAdjustments[0];
-                } 
-                
-                _hiddenLayers[i - 1].Nodes[j].ErrorAdjustments[0] =
-                    CalculateInverseSigmoid(_hiddenLayers[i - 1].Nodes[j].PreviousSum) * summationOfWeightsAndDeltas;
-                for (int k = 0; k < _hiddenLayers[i - 1].Nodes[j].CurrentWeights.Length; k++)
-                {
-                    _hiddenLayers[i - 1].Nodes[j].CurrentWeights[k] += _hiddenLayers[i].Nodes[k].ErrorAdjustments[0] *
-                                                                       learningRate * _hiddenLayers[i - 1].Nodes[k].CurrentSum;
-                    /*Debug.Log($"hiddenlayers.nodes.currentweights: {_hiddenLayers[i-1].Nodes[j].CurrentWeights[k]} i: {i} j: {j} k: {k}");*/
-                }
-
-                _hiddenLayers[i - 1].Nodes[j].PreviousSum = 0;
-            }
-        }    
-    }
-}
-
-public struct Node
-{
-    // each node will need to track the current and previous sums
-    public float CurrentSum;
-    public float PreviousSum; // before activation function, used for actual - expected multiplication
-
-    // the collection of weights and adjustment values for weights
-    public float[] CurrentWeights;
-    public float[] ErrorAdjustments;
-}
-
-// Each layer has a collection of nodes 
-public struct Layer
-{
-    public Node[] Nodes;
 }
